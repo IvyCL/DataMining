@@ -1,0 +1,247 @@
+---
+title: "Assignment2-ChenLiu"
+author: "Chen Liu"
+date: "January 17, 2020"
+output:
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE}
+source("/Users/me/Desktop/MSCA/DataMining/DMweek2/komeans.R")
+library(rdist)
+library(reshape2)
+library(tidyr)
+library(ggplot2)
+```
+Use GermanCredit Data
+```{r,warning=FALSE}
+library(caret)
+data("GermanCredit")
+```
+
+1. Select the numerical variables that are useful
+```{r}
+my_dat<-GermanCredit[,1:7]
+```
+
+2. Use kmeans and komeans
+3. Generate the K-means solution. Extract 2-10 clusters and present the VAF.Also fit the holdout with the centers genrated from the training set k-means solutions.
+```{r}
+set.seed(234)
+#create training/test datasets
+train_index<-sample(1:nrow(my_dat),size=0.7*nrow(my_dat))
+dat_train<-my_dat[train_index, ]
+dat_holdout <-my_dat[-train_index,]
+scaled<-lapply(1:7,function(i){(dat_holdout[,i]-mean(dat_train[,i]))/sd(dat_train[,i])})
+scaled.holdout<- data.frame(do.call(cbind,scaled))
+colnames(scaled.holdout) <- colnames(dat_holdout)
+
+#k-means clustering
+set.seed(234)
+result<-list()
+k_means.result<-lapply(2:10,function(k){
+    k_means.train <- kmeans(scale(dat_train), centers =k, nstart = 100)
+    k_means.holdout<-kmeans(scaled.holdout,centers=k_means.train$centers, nstart = 1)
+    result$k <- k 
+    result$train.VAF <- sum(k_means.train$betweenss) / k_means.train$totss
+    result$holdout.VAF<- sum(k_means.holdout$betweenss) / k_means.holdout$totss
+    return(list(result=result,train=k_means.train,holdout = k_means.holdout))
+})
+
+km.results <- data.frame( do.call(rbind,lapply(k_means.result, function(x){x$result})) )
+
+```
+
+
+4. Perform Scree tests to choose appropriate number of k-means clusters
+```{r}
+
+plot(2:10, km.results$train.VAF, main = "Scree Plot for Kmeans Clustering Training", 
+     xlab = "Number of Clusters", ylab = "VAF", type = "b", col = "blue")
+lines(2:10, km.results$holdout.VAF, type ='b',col = 'green')
+legend("topleft",legend=c("Train","Holdout"),col=c("blue", "green"),lty=1:1)
+```
+
+6.Choose 1 K-means solutions to retain from many solutions that you have generated.
+ 
+From the scree plot above, the elbow method suggests 3-cluster is the final solution, but it looks like the model fit the holdout dataset better in 5 clusters. Let's compare 3-cluster, 4-cluster and 5-cluster from different facotrs.
+
+```{r}
+train.centers <- lapply(k_means.result, function(x){
+        train <- data.frame(   dataset='train',
+                               k = x$res$k,
+                               Cluster_Size=x$train$size/nrow(dat_train),
+                               center = rownames(x$train$centers),
+                               x$train$centers)
+        
+        return(train)
+                                       
+})
+train.centers <- do.call(rbind, train.centers)
+train.centers.selected <-train.centers[which(train.centers$k>2&train.centers$k<6),]
+
+holdout.centers <- lapply(k_means.result, function(x){
+        holdout <- data.frame(   dataset='holdout',
+                                k = x$res$k,
+                                 Cluster_Size=x$holdout$size/nrow(dat_holdout),
+                               center = rownames(x$holdout$centers),
+                              x$holdout$centers)
+        
+        return(holdout)
+                                       
+})
+holdout.centers <- do.call(rbind, holdout.centers)
+holdout.centers.selected <-holdout.centers[which(holdout.centers$k>2&holdout.centers$k<6),]
+```
+
+Firstly, I will look at the cluster size of each cluster in each case. 
+```{r}
+Cluster_size <- data.frame(cbind(k=train.centers.selected$k,train_cluster.size=train.centers.selected$Cluster_Size,
+                              holdout.centers.selected$Cluster_Size,
+                              diff=train.centers.selected$Cluster_Size-holdout.centers.selected$Cluster_Size))
+Cluster_size$percent_change<-Cluster_size$diff/Cluster_size$train_cluster.size
+Cluster_size
+size_diff<-cbind(3:5,c(sum(Cluster_size[which(Cluster_size$k==3),5]),sum(Cluster_size[which(Cluster_size$k==4),5]),sum(Cluster_size[which(Cluster_size$k==5),5])))
+colnames(size_diff)<-c("k","sum_change")
+size_diff
+```
+
+It looks like that for when k equals 5, the sum of differences among cluster sizes is the smallest. But when we look at the individual performance of each cluster, k value of 4 performs better.
+
+Then let's investigate the center of each cluster.
+```{r}
+centers.holdout<-as.vector(unname(holdout.centers.selected[1:12,5:11]))
+centers.train<-as.vector(unname(train.centers.selected[1:12,5:11]))
+
+#k=3
+dist_3<- sapply(1:3,function(i){
+  cdist(centers.holdout[i,],centers.train[i,])
+})
+
+#k=4
+dist_4<- sapply(4:7,function(i){
+  cdist(centers.holdout[i,],centers.train[i,])
+})
+#k=5
+dist_5<- sapply(8:12,function(i){
+  cdist(centers.holdout[i,],centers.train[i,])
+})
+
+mean_dist<-c(sum(dist_3)/3,sum(dist_4)/4,sum(dist_5)/5)
+names(mean_dist)<-c("k=3","k=4","k=5")
+mean_dist
+```
+
+When k=4, the average movement of cluster centers is the smallest.
+
+Now we try to investigate the interpretability of the clusters. 
+```{r}
+centers<-rbind(train.centers.selected,holdout.centers.selected)
+km.centers <- gather(centers, 
+                           key = 'variable', 
+                           value = 'mean', 
+                           Duration:NumberPeopleMaintenance, 
+                           factor_key = TRUE)
+ggplot( km.centers, aes(x=variable,y=mean, group = dataset, fill = dataset)) +geom_col(position = 'dodge') + facet_grid(k~center, labeller = label_both) +coord_flip()
+```
+
+The plot shows that when k equals 4, the characteristcs of each cluster are clear and the results of train and holdout are consistent.
+Therefore, based on the analysis above I choose 4 clusters.
+
+Now let's restore centers to original values in order to interpret them.
+```{r}
+centers_4<-train.centers.selected[which(train.centers.selected$k==4),5:11]
+restored_centers<-lapply(1:7,function(i){(sd(dat_train[,i])*centers_4[,i])+mean(dat_train[,i])})
+restored_centers<- data.frame(do.call(cbind,restored_centers))
+colnames(restored_centers)<-colnames(train.centers.selected)[5:11]
+```
+Cluster1: People who have high amount and duration, and low installment rate
+Cluster2: Young people who have second high installment rate and low ohter variables
+Cluster3: People who have high number of maitenance
+Cluster4: old People who have high residence duration and highest installment rate
+
+
+7.Generate 3-5 komeans clusters.
+```{r}
+result2<-list()
+ko_means.result<-lapply(3:5,function(k){
+    kom <- komeans(data = dat_train, 
+                          nclust = k, 
+                          lnorm = 2, 
+                          nloops = 100, 
+                          tolerance = 0.001, 
+                          seed = 234)
+    result2$k <- k 
+    result2$VAF <- kom$VAF
+    return(list(result=result2,ko_means=kom))
+})
+
+kom.results <- data.frame( do.call(rbind,lapply(ko_means.result, function(x){x$result})) )
+VAF.compare<-cbind(ko=kom.results$VAF,km=km.results$train.VAF[2:4])
+VAF.compare
+```
+
+Given k values, k overlapping means has higher VAF.
+
+8. Compare the chosen kmeans solution with a komeans from an interpretability perspective.(k=4)
+```{r}
+ko_centers<-data.frame(dataset='train',k=4,center=1:4,ko_means.result[[2]]$ko_means$Centroids)
+colnames(ko_centers)[4:10]<-colnames(train.centers.selected)[5:11]
+kom.centers <- gather(ko_centers, 
+                           key = 'variable', 
+                           value = 'mean', 
+                           Duration:NumberPeopleMaintenance, 
+                           factor_key = TRUE)
+
+km_kom.centers<-rbind(data.frame(type = 'kmeans', km.centers[,-3][km.centers$k==4 & km.centers$dataset=='train',]), 
+                data.frame(type = 'komeans', kom.centers))
+
+ggplot(km_kom.centers, aes(x=variable,y=mean, group = type, fill = type))+ geom_col(position = 'dodge') + facet_grid(~center)+coord_flip()
+```
+We can see from the chart above that the result from kmeans and komeans are quite different given the same k value.
+
+9.
+Restore the center back to the level of original data, and interpret.
+```{r,warning=FALSE}
+ggplot( kom.centers, aes(x=variable,y=mean,group=dataset,fill=dataset)) + geom_col(position = 'dodge') + facet_grid(~center) + coord_flip()
+ko.centers<-ko_centers[,4:10]
+ko_restored_centers<-lapply(1:7,function(i){(sd(dat_train[,i])*ko.centers[,i])+mean(dat_train[,i])})
+ko_restored_centers<- data.frame(do.call(cbind,ko_restored_centers))
+colnames(ko_restored_centers)<-colnames(train.centers.selected)[5:11]
+```
+
+Cluster1: Young people who have second high installment rate and low ohter variables
+Cluster2: old People who have high residence duration, highest installment rate and existing credits
+Cluster3: People who have high amount and duration, lowest installmenet rate
+Cluster4: People who have high number of people maintenance
+
+I choose the result of k overlapping means.
+
+10. Recruitment steps
+
+a. 1) Randomly select people's phone number and call
+   2) Describe our research and ask whether they're willing to participate
+   3) Then ask them questions related to thoes seven variables and decide which group they belong to
+   
+b. Randomly assign people in each cluster to focus group and AUU group and two groups have approximately same group size.Do not tell them they will be reimbursed until we finished our research.
+
+c. We ask them questions related to thoes seven variables and compare it's distance to the center of each group by euclidean distance.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
