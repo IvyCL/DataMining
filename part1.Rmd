@@ -1,0 +1,133 @@
+---
+title: "Assignment3_ChenLiu Part1"
+author: "Chen Liu"
+date: "1/26/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,warning=FALSE,include=FALSE}
+library(caret)
+data("GermanCredit")
+library(poLCA)
+library(tidyr)
+library(ggplot2)
+```
+
+Because LCA will likely perform better if you select variables that have the same or similar numbers of levels.So I decided to choose categorical variables that have similar numbers of levels.Variables have large numbers of levels like Purposes are not selected.
+
+The categorical data I choose is: Personal status/sex, Jobs, Property,Credit history. I will convert all the "dummy-fied" variables to a single variable.
+
+```{r}
+Personal<-GermanCredit[,41:45]
+Personal.name<-colnames(Personal)
+colnames(Personal)<-c(1,2,3,4,5)
+w <- which(Personal==1, arr.ind = T)
+Personal$tranformed <- toupper(names(Personal)[w[order(w[,1]),2]])
+```
+
+```{r}
+Property<-GermanCredit[,49:52]
+Property.name<-colnames(Property)
+colnames(Property)<-c(1,2,3,4)
+w <- which(Property==1, arr.ind = T)
+Property$tranformed <- toupper(names(Property)[w[order(w[,1]),2]])
+```
+
+```{r}
+Job<-GermanCredit[,59:62]
+Job.name<-colnames(Job)
+colnames(Job)<-c(1,2,3,4)
+w <- which(Job==1, arr.ind = T)
+Job$tranformed <- toupper(names(Job)[w[order(w[,1]),2]])
+```
+
+```{r}
+CreditHistory<-GermanCredit[,15:19]
+CreditHistory.name<-colnames(CreditHistory)
+colnames(CreditHistory)<-c(1,2,3,4,5)
+w <- which(CreditHistory==1, arr.ind = T)
+CreditHistory$tranformed <- toupper(names(CreditHistory)[w[order(w[,1]),2]])
+
+```
+
+```{r}
+dat_cat<-data.frame(Personal=Personal$tranformed,
+                    Property=Property$tranformed,
+                    Job=Job$tranformed,
+                    CreditHistory=CreditHistory$tranformed
+                    )
+                    
+```
+
+Split data into traing and test sets.
+```{r}
+set.seed(353)
+train_index<-sample(1:nrow(dat_cat),size=0.7*nrow(dat_cat))
+dat_train<-dat_cat[train_index, ]
+dat_holdout <-dat_cat[-train_index,]
+```
+
+Perform latent class analysis on the training datasets and collect the information.
+```{r,echo=F, message=FALSE}
+f <- cbind(Personal, Property, Job, CreditHistory) ~ 1
+set.seed(4536)
+result<-list()
+LCA.result<-lapply(2:6,function(k){
+    LCA.train <- poLCA(f, dat_train, nclass=k, nrep=50,maxiter=1000, graphs=FALSE,
+                     tol=1e-10, probs.start=NULL)
+    result$k <- k 
+    result$train.AIC <- LCA.train$aic
+    result$train.BIC <- LCA.train$bic
+    return(list(result=result))
+})
+LCA <- data.frame( do.call(rbind,lapply(LCA.result, function(x){x$result})) )
+```
+
+```{r}
+plot(2:6, LCA$train.AIC, main = "AIC", 
+     xlab = "Number of Clusters",ylab="AIC", type = "b", col = "blue")
+
+plot(2:6, LCA$train.AIC, main = "AIC", 
+     xlab = "Number of Clusters",ylab="AIC & BIC",ylim=c(6253,6654), type = "b", col = "blue")
+lines(2:6, LCA$train.BIC, type ='b',col = 'green')
+```
+The BIC scores climb as the number of classes increase. And the AIC score indicates that when number of classes equals 3 it is the best solution. Because there is an obvious elbow at the value of 3, I choose this as my solution.
+
+Let's take a closer look at the selected model and interpret each class.
+```{r}
+set.seed(4536)
+LCA_3<-poLCA(f, dat_train, nclass=3, nrep=50,maxiter=1000, graphs=FALSE,
+                     tol=1e-10, probs.start=NULL)
+plot(LCA_3)
+```
+Class 1 shares 35% of population, class2 shares 29% and class3 shares 36%. In class1, customers are single male whoh don't have any property or only have cars. They are skilled employees and doing official work. In class2, customers are also single male, but they have real estate and are unskilled residents. In class3, customers are either divorced or married female, they are skilled employees and have their own property(real estate, cars or savings). Most of the customers existing credits paid back duly till now.
+
+Holdout Validation
+```{r}
+holdout <- poLCA(f, dat_holdout, nclass=3, nrep=50, tol=0.001, verbose=FALSE, 
+                 graphs=TRUE, probs.start = LCA_3$probs)
+```
+
+
+The relative class sizes are wildly different for the training vs. holdout group. The training groups have almost even classes while test groups have a 7/45/48 split.
+
+```{r}
+holdout$probs
+LCA_3$probs
+```
+
+The characteristics of classes in training groups and test groups also vary a lot. It looks like class3 in training group is divived into two classes in test: class1 and class3. Class1 and class2 in training group are combined as class2 in test. 
+
+I tried to find the latent class in thoes classes. I think it is their pursuit of life. We can see that class1 in training group are skilled single men who haven't own any property, they are aimed at better life. But in class2, thoes single men who already have property are unskilled.They are happy with the way things are. In class3, thoes divorced women are skilled and have property. They are living a better life.
+
+Conclusion:
+
+I am not sure LCA is a good model for this dataset. Becasuse this dataset has many variables with different numbers of levels. Although I already try to use variables with similar numbers of levels, the result is still not satisfied. 
+
+
+
+
