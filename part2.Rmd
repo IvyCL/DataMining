@@ -1,0 +1,115 @@
+---
+title: "Assignment3_Part2"
+author: "Chen Liu"
+date: "2/9/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Get GermanCredit data
+```{r}
+library(caret)
+data("GermanCredit")
+my.data <- GermanCredit
+```
+
+Select numerical data only and split train and test data set
+```{r}
+my_dat <- my.data[, 1:7]
+names(my_dat)
+set.seed(2432)
+train_index <- sample(1:nrow(my_dat), size = 0.7 * nrow(my_dat))
+dat_train<-my_dat [train_index, ]
+dat_holdout <-my_dat[-train_index,]
+```
+
+Scale test data using means and standard deviations from train set.
+```{r}
+scaled<-lapply(1:7,function(i){(dat_holdout[,i]-mean(dat_train[,i]))/sd(dat_train[,i])})
+scaled.holdout<- data.frame(do.call(cbind,scaled))
+colnames(scaled.holdout) <- colnames(dat_holdout)
+```
+
+Perform PCA on the train data
+```{r}
+pca.train <- prcomp(dat_train, scale = TRUE)
+df <- data.frame(t(summary(pca.train)$importance))
+df$n <- 1:nrow(df)
+ggplot(df, aes(x=n, y=Standard.deviation^2)) + 
+  geom_bar(stat="identity") + 
+  labs(y="Variances", x="Principal Component", 
+       title="Importance of Scaled Principal Components", 
+       subtitle="Variance plot")
+ggplot(df, aes(x=n, y=Cumulative.Proportion)) + 
+  geom_point() + 
+  geom_line() +
+  labs(y="Proportion of Variance Explained", x="Principal Component", 
+       title="Importance of Scaled Principal Components", 
+       subtitle="Cumulative Proportion of Variance Explained")
+```
+
+The cumulative variance plot shows there is no obvious elbow point until the sixth component. But if PCA only reduces dimensions by one, it does not work well on our data. So I plot the individual variance explained by each component. I decided to choose first four components which explained over 70% of the total variance, which is acceptable.
+
+Component v.s. Component
+```{r}
+biplot(pca.train$x[1:20,c(1,2)],pca.train$rotation[,c(1,2)])
+biplot(pca.train$x[1:20,c(1,3)],pca.train$rotation[,c(1,3)])
+biplot(pca.train$x[1:20,c(1,4)],pca.train$rotation[,c(1,4)])
+
+
+```
+
+PC1 explains the most variation(23.5%). This component is dominated by the weights on duration of credit and credit amount. Duration and amount are correlated in PC1. That maybe because credit amount builds as time goes, people who have long credit duration tend to have higher credit amount. Therefore, PC1 can be described as "Length of credit duration".
+
+PC2 has no duration or amount, but is instead made up for age, residence, and existing credits. The most important features in PC2 are age and residence duration, which indicates their stability in the area. My guess is customers who are older and have lived in their own home or apartment for a long time are better credit risks.
+
+PC3 is dominated by the negative value for percentage rate with some positive Number of Dependents. I would say PC3 can be described as Number of people dependents on the customer.
+
+PC4 looks like a combination of thoes features and works as the balancing component.
+
+Show loadings are orthogonal
+```{r}
+loadings <- pca.train$rotation
+round(t(loadings[,1:4]) %*% loadings[,1:4], 12)
+```
+
+Show component scores are orthogonal
+```{r}
+round(t(pca.train$x[,1:4])%*%pca.train$x[,1:4],2)
+```
+
+Perform holdout validation of PCA
+```{r}
+pca.valid <- predict(pca.train, newdata = scaled.holdout)
+loadings_test <- pca.train$rotation
+Test.Manual <- pca.valid[,1:4] %*% t(loadings_test[,1:4])
+diag(cor(Test.Manual,scaled.holdout))
+cor(as.vector(unlist(scaled.holdout)), as.vector(Test.Manual))
+cor(as.vector(scale(dat_train)), as.vector(pca.train$x[,1:4]%*%t(loadings_test[,1:4])))
+
+```
+
+The diagnonals of the correlation matrix show the correlation between each variable and itself on the manually created holdout data with the real holdout data. The diagonals should be very close to one if the transformations properly captured the variance of the components. In this case only a few variables 
+were recreated well: rate, residence, and people maintenance. The other variables do not have very high correlations.
+
+R-squared at holdout is around 0.2. VAF of model is lower than I expected. Because I chose PCs which explained more than 70% of the variance of data, I would expect the VAF is close to that number. However, it isn't. It seems like the model does not perform well on the holdout data.
+
+Rotate Components
+```{r}
+loadings_rot <- data.frame(varimax(pca.train$rotation)$rotmat)
+biplot(pca.train$x[,c(1,2)],loadings_rot[,c(1,2)])
+biplot(x = as.matrix(pca.train$x[,c(1,3)]), y = as.matrix(loadings_rot[,c(1, 3)]))
+```
+
+After the transformation through varimax, some preselected features in the traning model maintained high weight in each componets, but some weights are reduced to zero and some others are added into each PC. Those features which continue to share a heavy weight are stable and should be considered primarily when analyzing the constitution of pricipal components. 
+
+For example, in PC1 the weights of amount has been reduced but Duration is still remained in PC1.
+
+Conclusion:
+From the train dataset perspective, PCA does reduced the dimension of original data. And the covariance between original train data and recovered sample data from the selected 4 PCs is 0.86. Although PCA doesn't reduce the data to 2 dimensions, by 4 PCs we can still maintain 75% of variance explained.
+
+However, when I perform holdout validation on the test data. The covariance is not stable and the Rsquare is pretty low. PCA seems not robust on this dataset. 
+
